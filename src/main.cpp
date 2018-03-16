@@ -154,17 +154,20 @@ int main()
     //VectorXf vec = words[5]->descriptor;
 
     stage1 = clock();
-    vocabulary.cudaGetFeature(feature);
+    VectorXf result1 =  vocabulary.cudaGetFeature(feature);
 
     stage2 = clock();
     
-    vocabulary.getFeature(feature);
+    VectorXf result2 = vocabulary.getFeature(feature);
+
     stage3 = clock();
 
     float elapsed_time1 = (float)(stage2 - stage1) / CLOCKS_PER_SEC;
     float elapsed_time2 = (float)(stage3 - stage2) / CLOCKS_PER_SEC;
 
     cout << elapsed_time1 << ": " << elapsed_time2 << endl;
+
+    //cout << result1.transpose() << endl << result2.transpose();
 
    //cout << res_feature;
     //int word_id = vocabulary.DBfindWord(vec.transpose());

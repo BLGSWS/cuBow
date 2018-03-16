@@ -238,13 +238,13 @@ WordId Vocabulary::findWord(const Eigen::VectorXf &feature) const
     return m_nodes[final_id].word_id;
 }
 
-WordId Vocabulary::DBfindWord(const Eigen::VectorXf &feature)
+WordId Vocabulary::DBfindWord(const Eigen::VectorXf &feature) const
 {
     NodeId final_id = 0;
     while (!m_nodes[final_id].isLeaf())
     {
         //std::cout << "parent id: " << m_nodes[final_id].id << std::endl;
-        std::vector<NodeId>& children = m_nodes[final_id].children;
+        const std::vector<NodeId>& children = m_nodes[final_id].children;
         /// 找到最近的聚类中心或单词
         float min_distance = DescManip::distance(feature, m_nodes[children[0]].descriptor);
         final_id = children[0];
@@ -481,6 +481,7 @@ Eigen::VectorXf CudaVocabulary::getFeature(const std::vector<Eigen::VectorXf> &d
         WordId word_id = findWord(descriptor);
         Node* p_node = getNodeWord(word_id);
         feature[word_id] += p_node->weight;
+        //std::cout << word_id << ", ";
     }
     return feature;
 }

@@ -50,30 +50,27 @@ __device__ int* dev_children_map;
 __device__ size_t descriptor_pitch;
 __device__ size_t children_pitch;
 
-float* dev_descriptor;
-float* dev_feature;
-
 /**
  * 使用cuda查询词典
  * @vec: 待查的向量
  * @vec_len: 向量长度
  * @k: 词典为k叉树
 */
-__global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, float* feature)
+__global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_t vec_len_pitch, float* feature)
 {
     /// 行
     const int tidx = threadIdx.x;
     const int tidy = threadIdx.y;
     const int bidx = blockIdx.x;
     int offset = bidx;
-    while (offset < vec_num)
+    while (offset < 5)
     {
         /// 记录父节点
         //__shared__ uint32 index;
         __shared__ struct cuNode* parent;
         /// 存储向量求模结果
         __shared__ float norm_array[thread_rows][thread_cols];
-        /// 储存求取最小距离向量结果
+        /// 储存求取最小距离向量结果 
         //__shared__ int min_offsets[thread_cols] = { 0 };
         __shared__ float min_distance;
         __shared__ int nearest_child;
@@ -119,7 +116,7 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, float
                         while (descriptor_offset < vec_len)
                         {
                             float* p_norm = (float*)((char*)dev_descriptor_map + (*p_child) * descriptor_pitch) + descriptor_offset;
-                            float* p_vec = (float*)((char*)vec + vec_len * offset) + descriptor_offset;
+                            float* p_vec = (float*)((char*)vec + vec_len_pitch * offset) + descriptor_offset;
                             //float* p_vec = vec + vec_len * offset + descriptor_offset;
                             float norm = *p_norm - *p_vec;
                             norm_array[tidy][tidx] += norm * norm;
@@ -199,6 +196,7 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, float
             {
                 int* p_parent_index = (int*)((char*)dev_children_map + children_index * children_pitch) + nearest_child;
                 parent = dev_vocabulary + *p_parent_index;
+                printf("%d ", parent->id);
             }
             else {}
             __syncthreads();
@@ -207,6 +205,7 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, float
         //
         if (tidx == 0 && tidy == 0)
         {
+            printf("word_id: %d ", parent->word_id);
             atomicAdd(&(feature[parent->word_id]), parent->weight);
         }
         else {}
@@ -336,6 +335,8 @@ float* cudaFindWord(float* host_descriptor, size_t rows, size_t cols)
 {
     dim3 dimBlock(thread_rows, thread_cols);
     float* feature;
+    float* dev_descriptor;
+    float* dev_feature;
     size_t cols_pitch;
 
     ERROR_CHECK( cudaSetDevice(0) )
@@ -350,16 +351,17 @@ float* cudaFindWord(float* host_descriptor, size_t rows, size_t cols)
 
     //ERROR_CHECK ( cudaHostAlloc((void**)&dev_descriptor, sizeof(float) * cols * rows, cudaHostAllocDefault) )
 
-    ERROR_CHECK( cudaMemcpy(dev_descriptor, host_descriptor, sizeof(float) * cols * rows, cudaMemcpyHostToDevice) )
+    //ERROR_CHECK( cudaMemcpy(dev_descriptor, host_descriptor, sizeof(float) * cols * rows, cudaMemcpyHostToDevice) )
 
     ERROR_CHECK( cudaHostAlloc((void**)&dev_feature, sizeof(float) * word_num, cudaHostAllocDefault) )
 
     /// 运行kernel函数
-    findWordKernel<<<256, dimBlock>>>(dev_descriptor, rows, cols, dev_feature);
+    findWordKernel<<<256, dimBlock>>>(dev_descriptor, rows, cols, cols_pitch, dev_feature);
 
     /// 传出数据到内存
     //struct cuNode *res_node = (cuNode*)malloc(sizeof(cuNode));
     feature = (float*)malloc(sizeof(float) * word_num);
+    //feature = (cuBowVector*)malloc(sizeof(cuBowVector) * rows);
     ERROR_CHECK( cudaMemcpy(feature, dev_feature, sizeof(float) * word_num, cudaMemcpyDeviceToHost) )
 
     //freeVocabulary();

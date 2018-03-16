@@ -76,7 +76,7 @@ public:
     const std::vector<Node*>& getWords() const { return m_words; }
     //for debug (REMOVE)
     Node* getNodeWord(uint32 idx) const { return m_words[idx]; }
-    WordId DBfindWord(const Eigen::VectorXf &feature);
+    WordId DBfindWord(const Eigen::VectorXf &feature) const;
 };
 
 class CudaVocabulary: public Vocabulary

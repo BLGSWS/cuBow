@@ -24,6 +24,12 @@ struct cuNode
     uint32 word_id;
 };
 
+struct cuBowVector
+{
+    uint32 id;
+    float value;
+};
+
 extern uint32 word_num;
 extern uint32 node_num;
 extern uint32 vector_row;
