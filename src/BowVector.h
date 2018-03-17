@@ -3,6 +3,7 @@
 #include <eigen3/Eigen/Core>
 #include <opencv2/core/eigen.hpp> /// cv to eigen
 #include <eigen3/Eigen/Dense>
+#include <eigen3/Eigen/Sparse>
 #include <vector>
 #include <set>
 #include <iostream>
@@ -12,8 +13,6 @@
 namespace cuBoW{
 
 //typedef unsigned int uint32;
-typedef unsigned short uint16;
-typedef unsigned char uint8;
 
 typedef unsigned int NodeId;
 typedef float WordValue;
@@ -70,7 +69,7 @@ public:
 
     void normalize(LNorm norm_type);
 
-    void transformData(cuBowVector* cuvec) const;
+    void transformData(cuSparseVector* cuvec) const;
 
 private:
 

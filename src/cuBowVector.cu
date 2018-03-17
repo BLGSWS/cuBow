@@ -4,6 +4,10 @@
 #include <device_launch_parameters.h>
 #include <device_functions.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <limits.h>
+
 #include "cuVocabulary.h"
 
 #define imin(a, b) (a < b? a: b)
@@ -16,26 +20,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
       fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
       if (abort) exit(code);
    }
-}
-
-#define CHECK(status) if (status != cudaSuccess) { \
-    fprintf(stderr, "error in cuda\n"); \
-    goto Error; \
-}
-
-#define INFO_CHECK(status, err_info) if (status != cudaSuccess) { \
-    fprintf(stderr, err_info); \
-    goto Error; \
-}
-
-#define CHECK_MAIN(status) if (status != cudaSuccess) { \
-    fprintf(stderr, "error in cuda\n"); \
-    return NULL; \
-}
-
-#define INFO_CHECK_MAIN(status, err_info) if (status != cudaSuccess) { \
-    fprintf(stderr, err_info); \
-    return NULL; \
 }
 
 //const int thread_per_block = 256;
@@ -56,14 +40,14 @@ __device__ size_t children_pitch;
  * @vec_len: 向量长度
  * @k: 词典为k叉树
 */
-__global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_t vec_len_pitch, float* feature)
+__global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_t vec_len_pitch, cuSparseVector* dev_feature)
 {
     /// 行
     const int tidx = threadIdx.x;
     const int tidy = threadIdx.y;
     const int bidx = blockIdx.x;
     int offset = bidx;
-    while (offset < 5)
+    while (offset < vec_num)
     {
         /// 记录父节点
         //__shared__ uint32 index;
@@ -93,10 +77,8 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_
             {
                 nearest_child = -1;
                 min_distance = FLT_MAX;
-                //printf("parent id in cuda: %d\n", parent->id);
             }
             else {}
-            //__syncthreads();
             if (tidx < 16 && tidy < 16)
             {
                 norm_array[tidx][tidy] = 0.;
@@ -107,12 +89,9 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_
                 if (children_index_offset < parent->children_num)
                 {
                     int* p_child = (int*)((char*)dev_children_map + children_index * children_pitch) + children_index_offset;
-                    //printf("(%d: %d) ", tidy, child);
                     if (*p_child != -1)
                     {
-                        int descriptor_offset = tidx;
-                        //if (tidx < vec_len && tidy < parent.children_num)
-                            //printf("child %d: (%d, %d): %f ", child, tidy, tidx, dev_descriptor_map[child * descriptor_pitch + descriptor_offset]);                                
+                        int descriptor_offset = tidx;                              
                         while (descriptor_offset < vec_len)
                         {
                             float* p_norm = (float*)((char*)dev_descriptor_map + (*p_child) * descriptor_pitch) + descriptor_offset;
@@ -196,7 +175,6 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_
             {
                 int* p_parent_index = (int*)((char*)dev_children_map + children_index * children_pitch) + nearest_child;
                 parent = dev_vocabulary + *p_parent_index;
-                printf("%d ", parent->id);
             }
             else {}
             __syncthreads();
@@ -205,14 +183,74 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_
         //
         if (tidx == 0 && tidy == 0)
         {
-            printf("word_id: %d ", parent->word_id);
-            atomicAdd(&(feature[parent->word_id]), parent->weight);
+            /*struct cuSparseVector word;
+            word.id = parent->word_id;
+            word.value = parent->weight;*/
+            dev_feature[offset].id = parent->word_id;
+            dev_feature[offset].value = parent->weight;
         }
         else {}
         __syncthreads();
 
         offset += gridDim.x;
-    }    
+    }
+}
+
+__global__ void featureMergeKernel(cuSparseVector* dev_feature, size_t dev_feature_len, int* feature_len)
+{
+    const int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tidx == 0)
+    {
+        *feature_len = dev_feature_len;
+    }
+    __syncthreads();
+    int swap_count;
+    do {
+        swap_count = 0;
+        int index = tidx * 2;
+
+        /// 偶排序
+        while (index + 1 < dev_feature_len)
+        {
+            if (dev_feature[index].id > dev_feature[index + 1].id)
+            {
+                cuSparseVector element = dev_feature[index];
+                dev_feature[index] = dev_feature[index + 1];
+                dev_feature[index + 1] = element;
+                swap_count++;
+            }
+            else if (dev_feature[index].id == dev_feature[index + 1].id && dev_feature[index].id != UINT_MAX)
+            {
+                dev_feature[index].value += dev_feature[index + 1].value;
+                dev_feature[index + 1].id = UINT_MAX;
+                atomicSub(feature_len, 1);
+            }
+            else {}
+            index += blockDim.x * gridDim.x;
+        }
+        __syncthreads();
+        /// 奇排序
+        index = tidx * 2 + 1;
+        while (index + 1 < dev_feature_len)
+        {
+            if (dev_feature[index].id > dev_feature[index + 1].id)
+            {
+                cuSparseVector element = dev_feature[index];
+                dev_feature[index] = dev_feature[index + 1];
+                dev_feature[index + 1] = element;
+                swap_count++;
+            }
+            else if (dev_feature[index].id == dev_feature[index + 1].id && dev_feature[index].id != UINT_MAX)
+            {
+                dev_feature[index].value += dev_feature[index + 1].value;
+                dev_feature[index + 1].id = UINT_MAX;
+                atomicSub(feature_len, 1);
+            }
+            else {}
+            index += blockDim.x * gridDim.x;
+        }
+
+    } while (__syncthreads_count(swap_count));
 }
 
 int freeVocabulary()
@@ -238,16 +276,10 @@ int freeVocabulary()
 
     printf("free cuda data success!\n");
     return 1;
-
-Error:
-    fprintf(stderr, "free data failed!");
-    return 0;
 }
 
 int initVocabulary()
 {
-
-    cudaError_t cudaStatus;
     //cudaStatus = cudaSetDevice(0);
     //INFO_CHECK(cudaStatus, "cudaSetDevice failed: Do you have a CUDA-capable GPU installed?\n")
 
@@ -271,10 +303,8 @@ int initVocabulary()
     CHECK(cudaStatus)*/
 
     /// 申请词典内存
-    cudaStatus = cudaMalloc((void**)&dev_vocabulary_temp, node_num * sizeof(cuNode));
-    INFO_CHECK(cudaStatus, "cudaMalloc for vocabulary failed!\n")
-    cudaStatus = cudaMemcpyToSymbol(dev_vocabulary, (void*)&dev_vocabulary_temp, sizeof(cuNode*));
-    CHECK(cudaStatus)
+    ERROR_CHECK( cudaMalloc((void**)&dev_vocabulary_temp, node_num * sizeof(cuNode)) )
+    ERROR_CHECK( cudaMemcpyToSymbol(dev_vocabulary, (void*)&dev_vocabulary_temp, sizeof(cuNode*)) )
 
     /*/// 申请单词描述向量内存
     cudaStatus = cudaMalloc((void**)&dev_descriptor_map, node_num * vector_row * sizeof(float));
@@ -284,63 +314,49 @@ int initVocabulary()
     cudaStatus = cudaMalloc((void**)&dev_children_map, nonleaf_node_num * cu_k * sizeof(int));
     INFO_CHECK(cudaStatus, "cudaMalloc for children map failed!")
     */
-
-    //printf("probe: %f\n", descriptor_map[20]);
-    /// 申请内存
-    cudaStatus = cudaMallocPitch((void**)&dev_descriptor_map_temp, &descriptor_pitch_temp, 
-        vector_row * sizeof(float), node_num);
-    INFO_CHECK(cudaStatus, "cudaMallocPitch for descriptor map failed!\n")
-    cudaStatus = cudaMemcpyToSymbol(dev_descriptor_map, (void*)&dev_descriptor_map_temp, sizeof(float*), size_t(0));
-    INFO_CHECK(cudaStatus, "cudaMemcpyToSymbol failed!")
     
-    cudaStatus = cudaMallocPitch((void**)&dev_children_map_temp, &children_pitch_temp, 
-        cu_k * sizeof(int), node_num - word_num);
-    INFO_CHECK(cudaStatus, "cudaMallocPitch for children failed\n")
-    cudaStatus = cudaMemcpyToSymbol(dev_children_map, (void*)&dev_children_map_temp, sizeof(int*), size_t(0));
-    INFO_CHECK(cudaStatus, "cudaMemcpyToSymbol failed!")
+    /// 申请内存
+    ERROR_CHECK( cudaMallocPitch((void**)&dev_descriptor_map_temp, &descriptor_pitch_temp, 
+        vector_row * sizeof(float), node_num) )
+    ERROR_CHECK( cudaMemcpyToSymbol(dev_descriptor_map, (void*)&dev_descriptor_map_temp, sizeof(float*), size_t(0)) )
+    
+    ERROR_CHECK( cudaMallocPitch((void**)&dev_children_map_temp, &children_pitch_temp, 
+        cu_k * sizeof(int), node_num - word_num) )
+    ERROR_CHECK( cudaMemcpyToSymbol(dev_children_map, (void*)&dev_children_map_temp, sizeof(int*), size_t(0)) )
 
     /// 将pitch复制到全局变量
-    cudaStatus = cudaMemcpyToSymbol(descriptor_pitch, (void*)&descriptor_pitch_temp, sizeof(size_t));
-    cudaStatus = cudaMemcpyToSymbol(children_pitch, (void*)&children_pitch_temp, sizeof(size_t));
-    INFO_CHECK(cudaStatus, "cudaMemcpyToSymbol failed!")
+    ERROR_CHECK( cudaMemcpyToSymbol(descriptor_pitch, (void*)&descriptor_pitch_temp, sizeof(size_t)) )
+    ERROR_CHECK( cudaMemcpyToSymbol(children_pitch, (void*)&children_pitch_temp, sizeof(size_t)) )
 
-    //cudaStatus = cudaMalloc((void**)&dev_res, node_num * sizeof(cuNode));
-    //INFO_CHECK(cudaStatus, "cudaMalloc for dev_res failed!\n")
 
     /// 复制数据
-    cudaStatus = cudaMemcpy(dev_vocabulary_temp, cu_vocabulary, node_num * sizeof(cuNode), cudaMemcpyHostToDevice);
-    INFO_CHECK(cudaStatus, "cudaMemcpy2D for vocabulary failed!\n")
+    ERROR_CHECK( cudaMemcpy(dev_vocabulary_temp, cu_vocabulary,
+        node_num * sizeof(cuNode), cudaMemcpyHostToDevice) )
 
-    cudaStatus = cudaMemcpy2D(dev_descriptor_map_temp, descriptor_pitch_temp, 
+
+    ERROR_CHECK( cudaMemcpy2D(dev_descriptor_map_temp, descriptor_pitch_temp, 
         descriptor_map, vector_row * sizeof(float), 
         vector_row * sizeof(float), node_num,
-        cudaMemcpyHostToDevice);
-    INFO_CHECK(cudaStatus, "cudaMemcpy2D for descriptor map failed!\n")
+        cudaMemcpyHostToDevice) )
     
-    cudaStatus = cudaMemcpy2D(dev_children_map_temp, children_pitch_temp,
+    ERROR_CHECK( cudaMemcpy2D(dev_children_map_temp, children_pitch_temp,
         children_map, cu_k * sizeof(int),
         cu_k *sizeof(int), node_num - word_num,
-        cudaMemcpyHostToDevice);
-    INFO_CHECK(cudaStatus, "cudaMemcpy2D for children map failed!\n")
+        cudaMemcpyHostToDevice) )
 
     printf("init cuda successe!\n");
     return 1;
-Error:
-
-    freeVocabulary();
-    return 0;
 }
 
-float* cudaFindWord(float* host_descriptor, size_t rows, size_t cols)
+std::vector<cuSparseVector> cudaFindWord(float* host_descriptor, size_t rows, size_t cols)
 {
     dim3 dimBlock(thread_rows, thread_cols);
-    float* feature;
+    struct cuSparseVector* feature;
     float* dev_descriptor;
-    float* dev_feature;
+    struct cuSparseVector* dev_feature;
     size_t cols_pitch;
 
     ERROR_CHECK( cudaSetDevice(0) )
-    //printf("word_num: %d\n", word_num);
 
     /// 分配2维内存
     ERROR_CHECK( cudaMallocPitch((void**)&dev_descriptor, (size_t*)&cols_pitch, (size_t)sizeof(float) * cols, rows) )
@@ -353,21 +369,33 @@ float* cudaFindWord(float* host_descriptor, size_t rows, size_t cols)
 
     //ERROR_CHECK( cudaMemcpy(dev_descriptor, host_descriptor, sizeof(float) * cols * rows, cudaMemcpyHostToDevice) )
 
-    ERROR_CHECK( cudaHostAlloc((void**)&dev_feature, sizeof(float) * word_num, cudaHostAllocDefault) )
+    ERROR_CHECK( cudaMalloc((void**)&dev_feature, sizeof(cuSparseVector) * rows) )
 
     /// 运行kernel函数
     findWordKernel<<<256, dimBlock>>>(dev_descriptor, rows, cols, cols_pitch, dev_feature);
 
+    /// gpu上的O(n)还没有cpu上的O(nlogn)快 ヽ(o`皿o)ノ
+    //featureMergeKernel<<<1, 256>>>(dev_feature, 255, dev_feature_len);
+
     /// 传出数据到内存
-    //struct cuNode *res_node = (cuNode*)malloc(sizeof(cuNode));
-    feature = (float*)malloc(sizeof(float) * word_num);
-    //feature = (cuBowVector*)malloc(sizeof(cuBowVector) * rows);
-    ERROR_CHECK( cudaMemcpy(feature, dev_feature, sizeof(float) * word_num, cudaMemcpyDeviceToHost) )
+    /*feature_len = (int*)malloc(sizeof(int));
+    NULL_CHECK( feature_len )
+    ERROR_CHECK( cudaMemcpy(feature_len, dev_feature_len, sizeof(int), cudaMemcpyDeviceToHost) )*/
 
-    //freeVocabulary();
-Error:
-    cudaFreeHost(dev_feature);
-    cudaFreeHost(dev_descriptor);
+    feature = (cuSparseVector*)malloc(sizeof(cuSparseVector) * rows);
+    NULL_CHECK( feature )
+    ERROR_CHECK( cudaMemcpy(feature, dev_feature, sizeof(cuSparseVector) * rows, cudaMemcpyDeviceToHost) )
 
-    return feature;
+    std::vector<cuSparseVector> sp_feature;
+    for (uint32 i = 0; i < rows; i++)
+    {
+        sp_feature.push_back(feature[i]);
+    }
+
+    cudaFree(dev_feature);
+    cudaFree(dev_descriptor);
+    free(feature);
+
+    return sp_feature;
 }
+

@@ -1,18 +1,21 @@
-#ifndef _CUBOWVECTOR_H
-#define _CUBOWVECTOR_H
+#pragma once
+
+#include <iostream>
+#include <vector>
+
+#define uint32 unsigned int
+#define uint16 unsigned long
+#define uint8 unsigned char
+
+/// 检查空指针
+#define VNAME(name) (#name)
+#define NULL_CHECK(ptr) if(ptr == NULL) { \
+    printf("null ptr: %s %s %d\n", VNAME(ptr), __FILE__, __LINE__); \
+    exit(0); }
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <stdio.h>
-#include <stdlib.h>
-
-#define uint32 unsigned int
-#define VNAME(name) (#name)
-#define NULL_CHECK(ptr) if(ptr == NULL) { null_check(ptr, __FILE__, __LINE__); }
-
-void null_check(void* ptr, const char *file, int line);
 
 struct cuNode
 {
@@ -24,11 +27,15 @@ struct cuNode
     uint32 word_id;
 };
 
-struct cuBowVector
+struct cuSparseVector
 {
     uint32 id;
     float value;
 };
+
+#ifdef __cplusplus
+}
+#endif
 
 extern uint32 word_num;
 extern uint32 node_num;
@@ -39,19 +46,20 @@ extern int* children_map;
 extern float* descriptor_map;
 extern struct cuNode* cu_vocabulary;
 
+std::vector<cuSparseVector> cudaFindWord(float* descriptors, size_t rows, size_t cols);
+
+
 /**
  * 释放内存
 */
 void deleteData();
-
-float* cudaFindWord(float* descriptors, size_t rows, size_t cols);
+/**
+ * 初始化GPU 
+ */
 int initVocabulary();
+/**
+ * 释放GPU 
+ */
 int freeVocabulary();
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif
 
 

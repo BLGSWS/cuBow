@@ -86,11 +86,11 @@ public:
     WeightingType weighting = TF_IDF, 
     ScoringType scoring = L1_NORM, 
     ClusterType cluster = KMEANS);
-    Eigen::VectorXf getFeature(const cv::Mat &mat) const;
-    Eigen::VectorXf getFeature(const std::vector<Eigen::VectorXf> &descriptors) const;
-    Eigen::VectorXf cudaGetFeature(float* host_descriptors, uint32 rows, uint32 cols) const;
-    Eigen::VectorXf cudaGetFeature(const std::vector<Eigen::VectorXf> &descriptors) const;
-    Eigen::VectorXf cudaGetFeature(const cv::Mat &mat) const;
+    Eigen::SparseVector<float> getFeature(const cv::Mat &mat) const;
+    Eigen::SparseVector<float> getFeature(const std::vector<Eigen::VectorXf> &descriptors) const;
+    Eigen::SparseVector<float> cudaGetFeature(float* host_descriptors, uint32 rows, uint32 cols) const;
+    Eigen::SparseVector<float> cudaGetFeature(const std::vector<Eigen::VectorXf> &descriptors) const;
+    Eigen::SparseVector<float> cudaGetFeature(const cv::Mat &mat) const;
     using Vocabulary::create;
     virtual void create(const std::vector<std::vector<Eigen::VectorXf> > &training_features);
     //virtual void create(const std::vector<cv::Mat> &training_features);

@@ -9,12 +9,6 @@ struct cuNode* cu_vocabulary = NULL;
 float* descriptor_map = NULL;
 int* children_map = NULL;
 
-void null_check(void* ptr, const char *file, int line)
-{
-    printf("null ptr: %s %s %d", VNAME(ptr), file, line);
-    exit(0);
-}
-
 void deleteData()
 {
     NULL_CHECK( children_map )

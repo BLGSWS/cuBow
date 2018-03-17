@@ -272,7 +272,7 @@ Vocabulary::~Vocabulary()
     m_cluster_object = nullptr;
 }
 
- CudaVocabulary::CudaVocabulary(int k, int L, 
+CudaVocabulary::CudaVocabulary(int k, int L, 
     WeightingType weighting, ScoringType scoring, ClusterType cluster) : Vocabulary(k, L, weighting, scoring, cluster)
 {
 
@@ -378,7 +378,7 @@ void CudaVocabulary::create(
     }
 }
 
-Eigen::VectorXf CudaVocabulary::cudaGetFeature(const cv::Mat &mat) const
+Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(const cv::Mat &mat) const
 {
     /*std::vector<Eigen::VectorXf> temp;
     for (uint32 j = 0; j < mat.rows; j++)
@@ -409,7 +409,7 @@ Eigen::VectorXf CudaVocabulary::cudaGetFeature(const cv::Mat &mat) const
     return cudaGetFeature(host_descriptors, rows, cols);
 }
 
-Eigen::VectorXf CudaVocabulary::cudaGetFeature(const std::vector<Eigen::VectorXf> &descriptors) const
+Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(const std::vector<Eigen::VectorXf> &descriptors) const
 {
     size_t rows, cols;
     rows = descriptors.size();
@@ -437,30 +437,27 @@ Eigen::VectorXf CudaVocabulary::cudaGetFeature(const std::vector<Eigen::VectorXf
     return cudaGetFeature(host_descriptors, rows, cols);
 }
 
-Eigen::VectorXf CudaVocabulary::cudaGetFeature(float* host_descriptors, uint32 rows, uint32 cols) const
+Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(float* host_descriptors, uint32 rows, uint32 cols) const
 {
     //vector<float> feature;
 
-    Eigen::VectorXf feature = Eigen::VectorXf::Zero(m_words.size());
+    Eigen::SparseVector<float> sp_feature(m_words.size()); 
 
-    float* cuda_feature = cudaFindWord(host_descriptors, rows, cols);
-    NULL_CHECK( cuda_feature )
+    std::vector<cuSparseVector> cuda_features = cudaFindWord(host_descriptors, rows, cols);
 
-    for (uint32 i = 0; i < m_words.size(); i++)
+    for (auto cuda_feature : cuda_features)
     {
-        feature[i] = cuda_feature[i];
+        //sp_feature.insert(cuda_feature.id) = cuda_feature.value;
+        sp_feature.coeffRef(cuda_feature.id) += cuda_feature.value;
     }
-
-    delete [] cuda_feature;
-    cuda_feature = nullptr;
 
     delete [] host_descriptors;
     host_descriptors = nullptr;
 
-    return feature;
+    return sp_feature;
 }
 
-Eigen::VectorXf CudaVocabulary::getFeature(const cv::Mat &mat) const
+Eigen::SparseVector<float> CudaVocabulary::getFeature(const cv::Mat &mat) const
 {
     std::vector<Eigen::VectorXf> temp;
     for (uint32 j = 0; j < mat.rows; j++)
@@ -473,17 +470,17 @@ Eigen::VectorXf CudaVocabulary::getFeature(const cv::Mat &mat) const
     return getFeature(temp);
 }
 
-Eigen::VectorXf CudaVocabulary::getFeature(const std::vector<Eigen::VectorXf> &descriptors) const
+Eigen::SparseVector<float> CudaVocabulary::getFeature(const std::vector<Eigen::VectorXf> &descriptors) const
 {
-    Eigen::VectorXf feature = Eigen::VectorXf::Zero(m_words.size());
+    Eigen::SparseVector<float> sp_feature(m_words.size());
     for (auto descriptor : descriptors)
     {
         WordId word_id = findWord(descriptor);
         Node* p_node = getNodeWord(word_id);
-        feature[word_id] += p_node->weight;
-        //std::cout << word_id << ", ";
+        //feature[word_id] += p_node->weight;
+        sp_feature.coeffRef(word_id) += p_node->weight;
     }
-    return feature;
+    return sp_feature;
 }
 
 CudaVocabulary::~CudaVocabulary()

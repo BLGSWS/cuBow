@@ -6,7 +6,7 @@ set( CMAKE_CXX_FLAGS "-std=c++11 -O0" )
 CUDA_ADD_LIBRARY ( cubowvector STATIC cuBowVector.cu)
 TARGET_LINK_LIBRARIES ( cubowvector )
 
-ADD_LIBRARY ( cuvocabulary STATIC cuVocabulary.c )
+ADD_LIBRARY ( cuvocabulary STATIC cuVocabulary.cpp )
 TARGET_LINK_LIBRARIES ( cuvocabulary )
 
 ADD_LIBRARY ( bowvector STATIC BowVector.cpp )

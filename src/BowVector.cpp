@@ -11,7 +11,7 @@ BowVector::~BowVector(void)
 
 }
 
-void BowVector::transformData(cuBowVector* cuvec) const
+void BowVector::transformData(cuSparseVector* cuvec) const
 {
     NULL_CHECK( cuvec )
     uint32 i = 0;
