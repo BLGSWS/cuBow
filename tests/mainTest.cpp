@@ -9,7 +9,8 @@
 #include "Cluster.h"
 #include "Vocabulary.h"
 #include "cuVocabulary.h"
-/// opencv
+
+/// opencv for feature detection
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/features2d/features2d.hpp>

@@ -10,8 +10,6 @@
 
 #include "cuVocabulary.h"
 
-#define imin(a, b) (a < b? a: b)
-
 #define ERROR_CHECK(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {
@@ -398,4 +396,3 @@ std::vector<cuSparseVector> cudaFindWord(float* host_descriptor, size_t rows, si
 
     return sp_feature;
 }
-

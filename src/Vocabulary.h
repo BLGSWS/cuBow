@@ -1,5 +1,10 @@
 #pragma once
-#include "BowVector.h"
+
+#include "Type.h"
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/core/eigen.hpp> /// cv to eigen
+
 #include "Cluster.h"
 
 namespace cuBoW {

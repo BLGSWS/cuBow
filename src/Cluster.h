@@ -1,5 +1,5 @@
 #pragma once
-#include "BowVector.h"
+#include "Type.h"
 
 namespace cuBoW{
 

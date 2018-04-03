@@ -13,6 +13,9 @@
     printf("null ptr: %s %s %d\n", VNAME(ptr), __FILE__, __LINE__); \
     exit(0); }
 
+#define imin(a, b) (a < b? a: b)
+#define imax(a, b) (a < b? b: a)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -47,7 +50,8 @@ extern float* descriptor_map;
 extern struct cuNode* cu_vocabulary;
 
 std::vector<cuSparseVector> cudaFindWord(float* descriptors, size_t rows, size_t cols);
-
+/// test
+void cudaFeatureScore();
 
 /**
  * 释放内存

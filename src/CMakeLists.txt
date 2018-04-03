@@ -3,30 +3,21 @@ FIND_PACKAGE ( OpenCV REQUIRED )
 
 set( CMAKE_CXX_FLAGS "-std=c++11 -O0" )
 
-CUDA_ADD_LIBRARY ( cubowvector STATIC cuBowVector.cu)
-TARGET_LINK_LIBRARIES ( cubowvector )
+CUDA_ADD_LIBRARY ( cufeature STATIC cuFeature.cu)
+# TARGET_LINK_LIBRARIES ( cufeature )
+
+CUDA_ADD_LIBRARY ( cuscore STATIC cuScore.cu)
+# TARGET_LINK_LIBRARIES ( cuscore )
 
 ADD_LIBRARY ( cuvocabulary STATIC cuVocabulary.cpp )
-TARGET_LINK_LIBRARIES ( cuvocabulary )
-
-ADD_LIBRARY ( bowvector STATIC BowVector.cpp )
-TARGET_LINK_LIBRARIES ( bowvector 
-    cuvocabulary
-    ${OpenCV_LIBS} )
+# TARGET_LINK_LIBRARIES ( cuvocabulary )
 
 ADD_LIBRARY ( cluster STATIC Cluster.cpp )
-TARGET_LINK_LIBRARIES ( cluster
-    bowvector )
+# TARGET_LINK_LIBRARIES ( cluster )
 
 ADD_LIBRARY ( vocabulary STATIC Vocabulary.cpp )
 TARGET_LINK_LIBRARIES( vocabulary
-    cubowvector
+    cuvocabulary
+    cufeature
     cluster
-    bowvector
     ${OpenCV_LIBS} )
-
-ADD_EXECUTABLE ( main main.cpp )
-TARGET_LINK_LIBRARIES( main
-    cubowvector
-    cluster
-    vocabulary )
