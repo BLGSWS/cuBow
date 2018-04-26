@@ -16,12 +16,28 @@ public:
     WeightingType weighting = TF_IDF, 
     ScoringType scoring = L1_NORM, 
     ClusterType cluster = KMEANS);
+    Vocabulary();
+    virtual ~Vocabulary();
+public:
     virtual void create(const std::vector<cv::Mat> &training_features);
     virtual void create(const std::vector<std::vector<Eigen::VectorXf> > &training_features);
     virtual void create(const std::vector<std::vector<Eigen::VectorXf> > &training_features, int k, int L);
     virtual void create(const std::vector<cv::Mat> &training_features, int k, int L);
     //virtual void create(const std::vector<Eigen::VectorXf> &training_features);
-    virtual ~Vocabulary();
+    /**
+     * 向二进制文件中保存词典树
+     * @param filepath: 二进制文件路径
+     * */
+    virtual void save(const std::string &filepath) const;
+    virtual void read(const std::string &filepath);
+    //static Vocabulary create_from_file(const std::string &filepath);
+public:
+    virtual Eigen::SparseVector<float> getFeature(const cv::Mat &mat) const;
+    virtual Eigen::SparseVector<float> getFeature(const std::vector<Eigen::VectorXf> &descriptors) const;
+    virtual Eigen::SparseVector<float> cudaGetFeature(const cv::Mat &mat) const;
+    virtual Eigen::SparseVector<float> cudaGetFeature(const std::vector<Eigen::VectorXf> &descriptors) const;
+protected:
+    Eigen::SparseVector<float> cudaGetFeature(float* host_descriptors, uint32 rows, uint32 cols) const;
 public:
     struct Node
     {
@@ -42,6 +58,8 @@ public:
 
         Node(NodeId _id): id(_id), weight(0), parent(0), word_id(0) {}
 
+        //Node(NodeId _id, NodeId _parent, std::vector<NodeId> _children, )
+
         bool isLeaf() const { return children.empty(); }
     };
 
@@ -54,6 +72,7 @@ protected:
     /**
      * 将数据转换成C形式
     */
+    void transformData() const;
     WordId findWord(const Eigen::VectorXf &feature) const;
 protected:
     /// 聚类数
@@ -75,36 +94,14 @@ protected:
     std::vector<Node*> m_words;
     /// 聚类器
     Cluster* m_cluster_object;
-
+protected:
+    bool GPU_flag;
 public:
     const std::vector<Node>& getVocabulary() const { return m_nodes; }
     const std::vector<Node*>& getWords() const { return m_words; }
     //for debug (REMOVE)
     Node* getNodeWord(uint32 idx) const { return m_words[idx]; }
     WordId DBfindWord(const Eigen::VectorXf &feature) const;
-};
-
-class CudaVocabulary: public Vocabulary
-{
-public:
-    CudaVocabulary(int k, int L, 
-    WeightingType weighting = TF_IDF, 
-    ScoringType scoring = L1_NORM, 
-    ClusterType cluster = KMEANS);
-    Eigen::SparseVector<float> getFeature(const cv::Mat &mat) const;
-    Eigen::SparseVector<float> getFeature(const std::vector<Eigen::VectorXf> &descriptors) const;
-    Eigen::SparseVector<float> cudaGetFeature(float* host_descriptors, uint32 rows, uint32 cols) const;
-    Eigen::SparseVector<float> cudaGetFeature(const std::vector<Eigen::VectorXf> &descriptors) const;
-    Eigen::SparseVector<float> cudaGetFeature(const cv::Mat &mat) const;
-    using Vocabulary::create;
-    virtual void create(const std::vector<std::vector<Eigen::VectorXf> > &training_features);
-    //virtual void create(const std::vector<cv::Mat> &training_features);
-    virtual ~CudaVocabulary();
-    //const Eigen::VectorXf& get_feature() const { return feature; }
-protected:
-    void transformData() const;
-private:
-    //Eigen::VectorXf feature;
 };
 
 } // namespcae CUBoW

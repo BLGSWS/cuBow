@@ -10,6 +10,10 @@
 
 #include "cuVocabulary.h"
 
+#define tidx threadIdx.x
+#define tidy threadIdx.y
+#define bidx blockIdx.x
+
 #define ERROR_CHECK(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {
@@ -25,7 +29,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 const int thread_rows = 16;
 const int thread_cols = 16;
 
-__device__ struct cuNode* dev_vocabulary;
+__device__ struct cudaNode* dev_vocabulary;
 __device__ float* dev_descriptor_map;
 __device__ int* dev_children_map;
 
@@ -38,25 +42,21 @@ __device__ size_t children_pitch;
  * @vec_len: 向量长度
  * @k: 词典为k叉树
 */
-__global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_t vec_len_pitch, cuSparseVector* dev_feature)
+__global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_t vec_len_pitch, cudaTuple* dev_feature)
 {
+    /// 记录父节点
+    //__shared__ uint32 index;
+    __shared__ struct cudaNode* parent;
+    /// 存储向量求模结果
+    __shared__ float norm_array[thread_rows][thread_cols];
+    /// 储存求取最小距离向量结果 
+    //__shared__ int min_offsets[thread_cols] = { 0 };
+    __shared__ float min_distance;
+    __shared__ int nearest_child;
     /// 行
-    const int tidx = threadIdx.x;
-    const int tidy = threadIdx.y;
-    const int bidx = blockIdx.x;
-    int offset = bidx;
+    uint32 offset = bidx;
     while (offset < vec_num)
     {
-        /// 记录父节点
-        //__shared__ uint32 index;
-        __shared__ struct cuNode* parent;
-        /// 存储向量求模结果
-        __shared__ float norm_array[thread_rows][thread_cols];
-        /// 储存求取最小距离向量结果 
-        //__shared__ int min_offsets[thread_cols] = { 0 };
-        __shared__ float min_distance;
-        __shared__ int nearest_child;
-
         if(tidx == 0 && tidy == 0)
         {
             parent = dev_vocabulary;
@@ -76,11 +76,8 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_
                 nearest_child = -1;
                 min_distance = FLT_MAX;
             }
-            else {}
-            if (tidx < 16 && tidy < 16)
-            {
-                norm_array[tidx][tidy] = 0.;
-            }
+
+            norm_array[tidx][tidy] = 0.;
             
             while(count < loop_count)
             {
@@ -181,7 +178,7 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_
         //
         if (tidx == 0 && tidy == 0)
         {
-            /*struct cuSparseVector word;
+            /*struct cudaTuple word;
             word.id = parent->word_id;
             word.value = parent->weight;*/
             dev_feature[offset].id = parent->word_id;
@@ -194,10 +191,10 @@ __global__ void findWordKernel(float *vec, size_t vec_num, size_t vec_len, size_
     }
 }
 
-__global__ void featureMergeKernel(cuSparseVector* dev_feature, size_t dev_feature_len, int* feature_len)
+__global__ void featureMergeKernel(cudaTuple* dev_feature, size_t dev_feature_len, int* feature_len)
 {
-    const int tidx = threadIdx.x + blockIdx.x * blockDim.x;
-    if (tidx == 0)
+    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid == 0)
     {
         *feature_len = dev_feature_len;
     }
@@ -205,14 +202,14 @@ __global__ void featureMergeKernel(cuSparseVector* dev_feature, size_t dev_featu
     int swap_count;
     do {
         swap_count = 0;
-        int index = tidx * 2;
+        int index = tid * 2;
 
         /// 偶排序
         while (index + 1 < dev_feature_len)
         {
             if (dev_feature[index].id > dev_feature[index + 1].id)
             {
-                cuSparseVector element = dev_feature[index];
+                cudaTuple element = dev_feature[index];
                 dev_feature[index] = dev_feature[index + 1];
                 dev_feature[index + 1] = element;
                 swap_count++;
@@ -228,12 +225,12 @@ __global__ void featureMergeKernel(cuSparseVector* dev_feature, size_t dev_featu
         }
         __syncthreads();
         /// 奇排序
-        index = tidx * 2 + 1;
+        index = tid * 2 + 1;
         while (index + 1 < dev_feature_len)
         {
             if (dev_feature[index].id > dev_feature[index + 1].id)
             {
-                cuSparseVector element = dev_feature[index];
+                cudaTuple element = dev_feature[index];
                 dev_feature[index] = dev_feature[index + 1];
                 dev_feature[index + 1] = element;
                 swap_count++;
@@ -254,12 +251,12 @@ __global__ void featureMergeKernel(cuSparseVector* dev_feature, size_t dev_featu
 int freeVocabulary()
 {
     /// 记录数据的内存地址
-    struct cuNode* dev_vocabulary_temp = NULL;
+    struct cudaNode* dev_vocabulary_temp = NULL;
     float* dev_descriptor_map_temp = NULL;
     int* dev_children_map_temp = NULL;
 
     /// 由符号连接到数据的内存地址
-    ERROR_CHECK( cudaMemcpyFromSymbol((void*)&dev_vocabulary_temp, dev_vocabulary, sizeof(cuNode*)) )
+    ERROR_CHECK( cudaMemcpyFromSymbol((void*)&dev_vocabulary_temp, dev_vocabulary, sizeof(cudaNode*)) )
     ERROR_CHECK( cudaMemcpyFromSymbol((void*)&dev_descriptor_map_temp, dev_descriptor_map, sizeof(float*)) )
     ERROR_CHECK( cudaMemcpyFromSymbol((void*)&dev_children_map_temp, dev_children_map, sizeof(int*)) )
 
@@ -281,7 +278,7 @@ int initVocabulary()
     //cudaStatus = cudaSetDevice(0);
     //INFO_CHECK(cudaStatus, "cudaSetDevice failed: Do you have a CUDA-capable GPU installed?\n")
 
-    struct cuNode* dev_vocabulary_temp;
+    struct cudaNode* dev_vocabulary_temp;
     float* dev_descriptor_map_temp;
     int* dev_children_map_temp;
 
@@ -297,12 +294,12 @@ int initVocabulary()
 
     /*cudaStatus = cudaMalloc((void**)&dev_descriptor_temp, sizeof(float) * cols * rows);
     INFO_CHECK(cudaStatus, "cudaMalloc for descriptor failed!\n")
-    cudaStatus = cudaMemcpyToSymbol(dev_descriptor, (void*)&dev_vocabulary_temp, sizeof(cuNode*));
+    cudaStatus = cudaMemcpyToSymbol(dev_descriptor, (void*)&dev_vocabulary_temp, sizeof(cudaNode*));
     CHECK(cudaStatus)*/
 
     /// 申请词典内存
-    ERROR_CHECK( cudaMalloc((void**)&dev_vocabulary_temp, node_num * sizeof(cuNode)) )
-    ERROR_CHECK( cudaMemcpyToSymbol(dev_vocabulary, (void*)&dev_vocabulary_temp, sizeof(cuNode*)) )
+    ERROR_CHECK( cudaMalloc((void**)&dev_vocabulary_temp, node_num * sizeof(cudaNode)) )
+    ERROR_CHECK( cudaMemcpyToSymbol(dev_vocabulary, (void*)&dev_vocabulary_temp, sizeof(cudaNode*)) )
 
     /*/// 申请单词描述向量内存
     cudaStatus = cudaMalloc((void**)&dev_descriptor_map, node_num * vector_row * sizeof(float));
@@ -328,8 +325,8 @@ int initVocabulary()
 
 
     /// 复制数据
-    ERROR_CHECK( cudaMemcpy(dev_vocabulary_temp, cu_vocabulary,
-        node_num * sizeof(cuNode), cudaMemcpyHostToDevice) )
+    ERROR_CHECK( cudaMemcpy(dev_vocabulary_temp, node_map,
+        node_num * sizeof(cudaNode), cudaMemcpyHostToDevice) )
 
 
     ERROR_CHECK( cudaMemcpy2D(dev_descriptor_map_temp, descriptor_pitch_temp, 
@@ -346,12 +343,12 @@ int initVocabulary()
     return 1;
 }
 
-std::vector<cuSparseVector> cudaFindWord(float* host_descriptor, size_t rows, size_t cols)
+std::vector<cudaTuple> cudaFindWord(float* host_descriptor, size_t rows, size_t cols)
 {
     dim3 dimBlock(thread_rows, thread_cols);
-    struct cuSparseVector* feature;
+    struct cudaTuple* feature;
     float* dev_descriptor;
-    struct cuSparseVector* dev_feature;
+    struct cudaTuple* dev_feature;
     size_t cols_pitch;
 
     ERROR_CHECK( cudaSetDevice(0) )
@@ -367,7 +364,7 @@ std::vector<cuSparseVector> cudaFindWord(float* host_descriptor, size_t rows, si
 
     //ERROR_CHECK( cudaMemcpy(dev_descriptor, host_descriptor, sizeof(float) * cols * rows, cudaMemcpyHostToDevice) )
 
-    ERROR_CHECK( cudaMalloc((void**)&dev_feature, sizeof(cuSparseVector) * rows) )
+    ERROR_CHECK( cudaMalloc((void**)&dev_feature, sizeof(cudaTuple) * rows) )
 
     /// 运行kernel函数
     findWordKernel<<<256, dimBlock>>>(dev_descriptor, rows, cols, cols_pitch, dev_feature);
@@ -380,11 +377,11 @@ std::vector<cuSparseVector> cudaFindWord(float* host_descriptor, size_t rows, si
     NULL_CHECK( feature_len )
     ERROR_CHECK( cudaMemcpy(feature_len, dev_feature_len, sizeof(int), cudaMemcpyDeviceToHost) )*/
 
-    feature = (cuSparseVector*)malloc(sizeof(cuSparseVector) * rows);
+    feature = (cudaTuple*)malloc(sizeof(cudaTuple) * rows);
     NULL_CHECK( feature )
-    ERROR_CHECK( cudaMemcpy(feature, dev_feature, sizeof(cuSparseVector) * rows, cudaMemcpyDeviceToHost) )
+    ERROR_CHECK( cudaMemcpy(feature, dev_feature, sizeof(cudaTuple) * rows, cudaMemcpyDeviceToHost) )
 
-    std::vector<cuSparseVector> sp_feature;
+    std::vector<cudaTuple> sp_feature;
     for (uint32 i = 0; i < rows; i++)
     {
         sp_feature.push_back(feature[i]);

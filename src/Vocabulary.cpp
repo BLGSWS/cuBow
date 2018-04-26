@@ -1,5 +1,7 @@
 #include "Vocabulary.h"
 #include "cuVocabulary.h"
+#include "Tools.hpp"
+#include <fstream>
 
 namespace cuBoW{
 
@@ -89,7 +91,9 @@ void Vocabulary::create(
     /// 设置IDF权重
     setNodeWeight(training_features);
     /// 转移数据
-    //transformData();
+    transformData();
+    initVocabulary();
+    deleteData();
 }
 
 void Vocabulary::create(
@@ -223,6 +227,7 @@ WordId Vocabulary::findWord(const Eigen::VectorXf &feature) const
         /// 找到最近的聚类中心或单词
         float min_distance = DescManip::distance(feature, m_nodes[children[0]].descriptor);
         final_id = children[0];
+        // std::cout << final_id << " ";
         for (size_t i = 1; i < children.size(); i++)
         {
             float distance = DescManip::distance(feature, m_nodes[children[i]].descriptor);
@@ -265,6 +270,129 @@ WordId Vocabulary::DBfindWord(const Eigen::VectorXf &feature) const
     return m_nodes[final_id].word_id;
 }
 
+void Vocabulary::save(const std::string &filepath) const
+{
+    std::ofstream ofile, onode, ochildren, odescriptor;
+    ofile.open(filepath + "/paraments.txt", std::ios::out);
+    onode.open(filepath + "/nodes", std::ios::binary);
+    ochildren.open(filepath + "/children", std::ios::binary);
+    odescriptor.open(filepath + "/descriptors", std::ios::binary);
+    if (!ofile.is_open() || !onode.is_open() || !ochildren.is_open() || !odescriptor.is_open())
+    {
+        std::cerr << "Vocabulary::save: fail in open file: " << filepath;
+        std::cerr << std::endl;
+        throw std::exception();
+    }
+
+    /// 写入参数
+    ofile << "#word_number" << std::endl << "word_num = " << m_words.size() << std::endl;
+    ofile << "#node_number" << std::endl << "node_num = " << m_nodes.size() << std::endl;
+    ofile << "#descriptor_demension" << std::endl << "vector_row = " << vector_row << std::endl;
+    ofile << "#cluster_number_of_tree"  << std::endl << "m_k = " << m_k << std::endl;
+    ofile << "#depth_of_tree" << std::endl << "m_d = " << m_d << std::endl;
+
+    transformData();
+    /// 写入二进制文件
+    onode.write((char*)node_map, node_num * sizeof(cudaNode));
+    ochildren.write((char*)children_map, (node_num - word_num) * m_k * sizeof(int));
+    odescriptor.write((char*)descriptor_map, sizeof(float) * node_num * vector_row);
+
+    ofile.close();
+    onode.close();
+    ochildren.close();
+    odescriptor.close();
+
+    deleteData();
+}
+
+void Vocabulary::read(const std::string &filepath)
+{
+    if (m_nodes.size() != 0)
+    {
+        std::cerr << "Vocabulary::read: there is data in vocabulary already" << std::endl;
+        throw std::exception();
+    }
+
+    std::ifstream inode, ichildren, idescriptor;
+    inode.open(filepath + "/nodes", std::ios::binary);
+    ichildren.open(filepath + "/children", std::ios::binary);
+    idescriptor.open(filepath + "/descriptors", std::ios::binary);
+    if (!inode.is_open() || !ichildren.is_open() || !idescriptor.is_open())
+    {
+        std::cerr << "Vocabulary::read: fail to open the file: " << filepath;
+        std::cerr << std::endl;
+        throw std::exception();
+    }
+
+    Param_reader reader(filepath + "/paraments.txt");
+
+    m_k = reader.get_param<uint32>("m_k");
+    m_d = reader.get_param<uint32>("m_d");
+    node_num = reader.get_param<uint32>("node_num");
+    word_num = reader.get_param<uint32>("word_num");
+    vector_row = reader.get_param<uint32>("vector_row");
+    cu_k = m_k;
+
+    if (node_map != nullptr || descriptor_map != nullptr || children_map != nullptr)
+    {
+        std::cerr << "Vocabulary::read: global ptr is not null" << std::endl;
+        throw std::exception();
+    }
+
+    node_map = new cudaNode[node_num];
+    children_map = new int[(node_num - word_num) * m_k];
+    descriptor_map = new float[node_num * vector_row];
+    
+    inode.read((char*)node_map, node_num * sizeof(cudaNode));
+    ichildren.read((char*)children_map, (node_num - word_num) * m_k * sizeof(int));
+    idescriptor.read((char*)descriptor_map, node_num * vector_row * sizeof(float));
+
+    m_nodes.reserve(node_num);
+    m_words.reserve(word_num);
+    cudaNode* p_vocabulary = node_map;
+    float* p_descriptor = descriptor_map;
+
+    for (int i = 0; i < node_num; i++)
+    {
+        Node node(i);
+        node.id = i;
+        node.parent = p_vocabulary->parent;
+        node.weight = p_vocabulary->weight;
+        node.word_id = p_vocabulary->word_id;
+
+        std::vector<NodeId> children;
+        if (p_vocabulary->children_index != -1)
+        {
+            children.reserve(p_vocabulary->children_num);
+            for (int j = 0; j < p_vocabulary->children_num; j++)
+            {
+                children.push_back(children_map[p_vocabulary->children_index * cu_k + j]);
+            }
+        }
+        node.children = children;
+
+        /// 应该都用Map的
+        Eigen::Map<Eigen::VectorXf> temp(p_descriptor, vector_row);
+        Eigen::VectorXf descriptor = Eigen::VectorXf::Map(temp.data(), vector_row);
+        node.descriptor = descriptor;
+
+        m_nodes.push_back(node);
+
+        if (node.isLeaf())
+        {
+            m_words.push_back(&m_nodes[i]);
+        }
+
+        ++p_vocabulary;
+        p_descriptor += vector_row;
+    }
+
+    std::cout << "read data from file " << filepath << " success!" << std::endl;
+    initVocabulary();
+
+    deleteData();
+}
+
 Vocabulary::~Vocabulary()
 {
     //deleteData();
@@ -272,13 +400,7 @@ Vocabulary::~Vocabulary()
     m_cluster_object = nullptr;
 }
 
-CudaVocabulary::CudaVocabulary(int k, int L, 
-    WeightingType weighting, ScoringType scoring, ClusterType cluster) : Vocabulary(k, L, weighting, scoring, cluster)
-{
-
-}
-
-void CudaVocabulary::transformData() const
+void Vocabulary::transformData() const
 {
     node_num = m_nodes.size();
     vector_row = m_nodes[0].descriptor.rows();
@@ -286,18 +408,21 @@ void CudaVocabulary::transformData() const
     word_num = m_words.size();
     cu_k = m_k;
 
-    cu_vocabulary = (cuNode*)malloc(sizeof(cuNode) * node_num);
+    node_map = (cudaNode*)malloc(sizeof(cudaNode) * node_num);
     descriptor_map = (float*)malloc(sizeof(float) * node_num * vector_row);
     children_map = (int*)malloc(sizeof(int) * (node_num - word_num) * m_k);
 
-    int children_index = 0;
+    cudaNode* p_node = node_map;
+    float* p_descriptor = descriptor_map;
+    int* p_child = children_map;
+    uint32 children_index = 0;
+    std::vector<Node>::const_iterator it = m_nodes.begin();
 
-    for (size_t i = 0; i < node_num; i++)
+    for (it; it != m_nodes.end(); it++)
     {
-        cu_vocabulary[i].id = i;
-        cu_vocabulary[i].parent = m_nodes[i].parent;
-        cu_vocabulary[i].weight = m_nodes[i].weight;
-        cu_vocabulary[i].word_id = m_nodes[i].word_id;
+        p_node->parent = it->parent;
+        p_node->weight = it->weight;
+        p_node->word_id = it->word_id;
  
         /*descriptor_map[i] = (float*)malloc(sizeof(float) * vector_row);
         for (uint32 j = 0; j < vector_row; j++)
@@ -307,78 +432,42 @@ void CudaVocabulary::transformData() const
         
         for (uint32 j = 0; j < vector_row; j++)
         {
-            descriptor_map[i * vector_row + j] = m_nodes[i].descriptor(j);
+            *(p_descriptor++) = it->descriptor(j);
             //std::cout << m_nodes[i].descriptor(j) << " ";
         }
 
-        size_t children_num = m_nodes[i].children.size();
+        size_t children_num = it->children.size();
         /// 非叶子节点
         if (children_num != 0)
         {
-            cu_vocabulary[i].children_num = children_num;
-            cu_vocabulary[i].children_index = children_index;
+            p_node->children_num = children_num;
+            p_node->children_index = children_index;
             //children_map[children_index] = (int*)malloc(sizeof(uint32) * m_k);
             int j = 0;
             while(j < children_num)
             {
-                children_map[children_index * m_k + j] = m_nodes[i].children[j];
-                j++;
+                *(p_child++) = it->children[j];
+                ++j;
             }
             while(j < m_k)
             {
-                children_map[children_index * m_k + j] = -1;
-                j++;
+                *(p_child++) = -1;
+                ++j;
             }
-            children_index++;
+            ++children_index;
         }
         /// 叶子节点
         else
         {
-            cu_vocabulary[i].children_num = 0;
-            cu_vocabulary[i].children_index = -1;
+            p_node->children_num = 0;
+            p_node->children_index = -1;
         }
 
+        ++p_node;
     }
 }
 
-void CudaVocabulary::create(
-    const std::vector<std::vector<Eigen::VectorXf> > &training_features)
-{
-    m_nodes.clear();
-    m_words.clear();
-    /// 词典为完全m_k叉树
-    int expected_nodes = (int)(pow((double)m_k, (double)m_d) - 1) / (m_k - 1);
-    m_nodes.reserve(expected_nodes);
-
-    std::vector<Eigen::VectorXf> features;
-    for (size_t i = 0; i < training_features.size(); i++)
-    {
-        for (size_t j = 0; j < training_features[i].size(); j++)
-        {
-            features.push_back(training_features[i][j]);
-        }
-    }
-    /// 建立第一个节点, 第一个节点为第0层
-    Node root(0);
-    root.descriptor = Eigen::MatrixXf::Zero(features[0].rows(), 1);
-    m_nodes.push_back(root);
-    /// 递归地建立词典
-    createLayer(0, features, 1);
-    /// 建立单词
-    createWords();
-    /// 设置IDF权重
-    setNodeWeight(training_features);
-    /// 转移数据
-    transformData();
-    int result = initVocabulary();
-    if (result != 1) 
-    {
-        std::cout << "error in initlize vocabulary" << std::endl;
-        exit(0);
-    }
-}
-
-Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(const cv::Mat &mat) const
+Eigen::SparseVector<float> Vocabulary::cudaGetFeature(const cv::Mat &mat) const
 {
     /*std::vector<Eigen::VectorXf> temp;
     for (uint32 j = 0; j < mat.rows; j++)
@@ -399,7 +488,7 @@ Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(const cv::Mat &mat) co
 
     for (uint32 i = 0; i < rows; i++)
     {
-        const uchar* head = mat.ptr<uchar>(i);
+        const float* head = mat.ptr<float>(i);
         for (uint32 j = 0; j < cols; j++)
         {
             host_descriptors[i * cols + j] = static_cast<float>(*(head + j));
@@ -409,7 +498,7 @@ Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(const cv::Mat &mat) co
     return cudaGetFeature(host_descriptors, rows, cols);
 }
 
-Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(const std::vector<Eigen::VectorXf> &descriptors) const
+Eigen::SparseVector<float> Vocabulary::cudaGetFeature(const std::vector<Eigen::VectorXf> &descriptors) const
 {
     size_t rows, cols;
     rows = descriptors.size();
@@ -422,7 +511,6 @@ Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(const std::vector<Eige
     { 
         cols = descriptors[0].rows(); 
     }
-
 
     float* host_descriptors = new float[rows * cols];
     NULL_CHECK( host_descriptors )
@@ -437,13 +525,13 @@ Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(const std::vector<Eige
     return cudaGetFeature(host_descriptors, rows, cols);
 }
 
-Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(float* host_descriptors, uint32 rows, uint32 cols) const
+Eigen::SparseVector<float> Vocabulary::cudaGetFeature(float* host_descriptors, uint32 rows, uint32 cols) const
 {
     //vector<float> feature;
 
     Eigen::SparseVector<float> sp_feature(m_words.size()); 
 
-    std::vector<cuSparseVector> cuda_features = cudaFindWord(host_descriptors, rows, cols);
+    std::vector<cudaTuple> cuda_features = cudaFindWord(host_descriptors, rows, cols);
 
     for (auto cuda_feature : cuda_features)
     {
@@ -457,7 +545,7 @@ Eigen::SparseVector<float> CudaVocabulary::cudaGetFeature(float* host_descriptor
     return sp_feature;
 }
 
-Eigen::SparseVector<float> CudaVocabulary::getFeature(const cv::Mat &mat) const
+Eigen::SparseVector<float> Vocabulary::getFeature(const cv::Mat &mat) const
 {
     std::vector<Eigen::VectorXf> temp;
     for (uint32 j = 0; j < mat.rows; j++)
@@ -470,7 +558,7 @@ Eigen::SparseVector<float> CudaVocabulary::getFeature(const cv::Mat &mat) const
     return getFeature(temp);
 }
 
-Eigen::SparseVector<float> CudaVocabulary::getFeature(const std::vector<Eigen::VectorXf> &descriptors) const
+Eigen::SparseVector<float> Vocabulary::getFeature(const std::vector<Eigen::VectorXf> &descriptors) const
 {
     Eigen::SparseVector<float> sp_feature(m_words.size());
     for (auto descriptor : descriptors)
@@ -481,17 +569,6 @@ Eigen::SparseVector<float> CudaVocabulary::getFeature(const std::vector<Eigen::V
         sp_feature.coeffRef(word_id) += p_node->weight;
     }
     return sp_feature;
-}
-
-CudaVocabulary::~CudaVocabulary()
-{
-    if (!freeVocabulary())
-    {
-        std::cout << "error in free vocabulary" << std::endl;
-    }
-    deleteData();
-    delete m_cluster_object;
-    m_cluster_object = nullptr;
 }
 
 } // namespace cuBoW

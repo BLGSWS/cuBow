@@ -5,9 +5,9 @@ uint32 vector_row;
 uint32 word_num;
 uint32 cu_k;
 
-struct cuNode* cu_vocabulary = NULL;
-float* descriptor_map = NULL;
-int* children_map = NULL;
+struct cudaNode* node_map = nullptr;
+float* descriptor_map = nullptr;
+int* children_map = nullptr;
 
 void deleteData()
 {
@@ -19,8 +19,8 @@ void deleteData()
     free(descriptor_map);
     descriptor_map = NULL;
 
-    NULL_CHECK( cu_vocabulary )
-    free(cu_vocabulary);
-    cu_vocabulary = NULL;
+    NULL_CHECK( node_map )
+    free(node_map);
+    node_map = NULL;
     
 }

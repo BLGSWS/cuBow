@@ -20,9 +20,8 @@
 extern "C" {
 #endif
 
-struct cuNode
+struct cudaNode
 {
-    uint32 id;
     float weight;
     size_t children_num;
     int children_index;
@@ -30,7 +29,7 @@ struct cuNode
     uint32 word_id;
 };
 
-struct cuSparseVector
+struct cudaTuple
 {
     uint32 id;
     float value;
@@ -47,11 +46,14 @@ extern uint32 cu_k;
 
 extern int* children_map;
 extern float* descriptor_map;
-extern struct cuNode* cu_vocabulary;
+extern struct cudaNode* node_map;
 
-std::vector<cuSparseVector> cudaFindWord(float* descriptors, size_t rows, size_t cols);
+std::vector<cudaTuple> cudaFindWord(float* descriptors, size_t rows, size_t cols);
+std::vector<float> cudaFeatureScore(cudaTuple* feature_group, uint32 m, uint32 n, uint32 nnz, uint32* csrRow);
+
 /// test
-void cudaFeatureScore();
+void cudaFeatureScoreTest();
+void cuSparseTest();
 
 /**
  * 释放内存

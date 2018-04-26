@@ -6,6 +6,7 @@
 
 #include <vector>
 #include <set>
+#include <string>
 #include <iostream>
 
 namespace cuBoW{
@@ -14,6 +15,7 @@ typedef unsigned int uint32;
 typedef unsigned int NodeId;
 typedef float WordValue;
 typedef unsigned int WordId;
+typedef unsigned int FrameId;
 
 enum LNorm { L1, L2 };
 
