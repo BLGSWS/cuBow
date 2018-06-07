@@ -23,6 +23,7 @@ public:
     virtual void create(const std::vector<std::vector<Eigen::VectorXf> > &training_features);
     virtual void create(const std::vector<std::vector<Eigen::VectorXf> > &training_features, int k, int L);
     virtual void create(const std::vector<cv::Mat> &training_features, int k, int L);
+    virtual void initGPU();
     //virtual void create(const std::vector<Eigen::VectorXf> &training_features);
     /**
      * 向二进制文件中保存词典树

@@ -5,10 +5,13 @@
 
 namespace cuBoW{
 
+Vocabulary::Vocabulary(): m_cluster_object(nullptr)
+{ }
+
 Vocabulary::Vocabulary(
     int k, int L, WeightingType weighting,  ScoringType scoring, ClusterType cluster):
     m_k(k), m_d(L), m_weighting(weighting), m_scoring(scoring), m_cluster(cluster), 
-    m_cluster_object(0)
+    m_cluster_object(nullptr)
 {
     createClusterObject();
 }
@@ -21,10 +24,10 @@ void Vocabulary::createScoringObject()
 
 void Vocabulary::createClusterObject()
 {
-    if (m_cluster_object != 0)
+    if (m_cluster_object != nullptr)
     {
         delete m_cluster_object;
-        m_cluster_object = 0;
+        m_cluster_object = nullptr;
     }
     else {}
 
@@ -90,10 +93,6 @@ void Vocabulary::create(
     createWords();
     /// 设置IDF权重
     setNodeWeight(training_features);
-    /// 转移数据
-    transformData();
-    initVocabulary();
-    deleteData();
 }
 
 void Vocabulary::create(
@@ -110,6 +109,13 @@ void Vocabulary::create(
     m_k = k;
     m_d = L;
     create(training_features);
+}
+
+void Vocabulary::initGPU()
+{
+    transformData();
+    initVocabulary();
+    deleteData();
 }
 
 void Vocabulary::createLayer(
@@ -290,6 +296,9 @@ void Vocabulary::save(const std::string &filepath) const
     ofile << "#descriptor_demension" << std::endl << "vector_row = " << vector_row << std::endl;
     ofile << "#cluster_number_of_tree"  << std::endl << "m_k = " << m_k << std::endl;
     ofile << "#depth_of_tree" << std::endl << "m_d = " << m_d << std::endl;
+    ofile << "#cluster_type" << std::endl << "m_cluster = " << m_cluster << std::endl;
+    ofile << "#weighting_type" << std::endl << "m_weighting = " << m_weighting << std::endl;
+    ofile << "#scoring_type" << std::endl << "m_scoring = " << m_scoring << std::endl;
 
     transformData();
     /// 写入二进制文件
@@ -331,6 +340,11 @@ void Vocabulary::read(const std::string &filepath)
     node_num = reader.get_param<uint32>("node_num");
     word_num = reader.get_param<uint32>("word_num");
     vector_row = reader.get_param<uint32>("vector_row");
+    m_cluster = ClusterType(reader.get_param<uint32>("m_cluster"));
+    m_weighting = WeightingType(reader.get_param<uint32>("m_weighting"));
+    m_scoring = ScoringType(reader.get_param<uint32>("m_scoring"));
+
+    createClusterObject();
     cu_k = m_k;
 
     if (node_map != nullptr || descriptor_map != nullptr || children_map != nullptr)
@@ -387,10 +401,7 @@ void Vocabulary::read(const std::string &filepath)
         p_descriptor += vector_row;
     }
 
-    std::cout << "read data from file " << filepath << " success!" << std::endl;
-    initVocabulary();
-
-    deleteData();
+    std::cout << "Read data from file " << filepath << " success!" << std::endl;
 }
 
 Vocabulary::~Vocabulary()
@@ -469,30 +480,38 @@ void Vocabulary::transformData() const
 
 Eigen::SparseVector<float> Vocabulary::cudaGetFeature(const cv::Mat &mat) const
 {
-    /*std::vector<Eigen::VectorXf> temp;
-    for (uint32 j = 0; j < mat.rows; j++)
-    {
-        cv::Mat slice = mat.rowRange(j, j + 1);
-        Eigen::RowVectorXf vec;
-        cv::cv2eigen(slice, vec);
-        temp.push_back(vec.transpose());
-    }*/
-
-    if (mat.channels() != 1) std::cout << "descriptor mat must have 1 channel" << std::endl;
-
     uint32 rows = mat.rows;
     uint32 cols = mat.cols;
 
     float* host_descriptors = new float[cols * rows];
     NULL_CHECK( host_descriptors )
 
-    for (uint32 i = 0; i < rows; i++)
+    if (mat.type() == CV_8UC1)
     {
-        const float* head = mat.ptr<float>(i);
-        for (uint32 j = 0; j < cols; j++)
+        for (uint32 i = 0; i < rows; i++)
         {
-            host_descriptors[i * cols + j] = static_cast<float>(*(head + j));
+            const uint8* head = mat.ptr<uint8>(i);
+            for (uint32 j = 0; j < cols; j++)
+            {
+                host_descriptors[i * cols + j] = static_cast<float>(*(head + j));
+            }
         }
+    }
+    else if (mat.type() == CV_32FC1)
+    {
+        float* p_descriptor = host_descriptors;
+        for (uint32 i = 0; i < rows; i++)
+        {
+            const float* head = mat.ptr<float>(i);
+            memcpy(p_descriptor, head, sizeof(float) * cols);
+            p_descriptor += cols;
+        }
+    }
+    else
+    {
+        /// https://blog.csdn.net/jeffdeen/article/details/52401526
+        std::cerr << "Vocabulary::cudaGetFeature: mat type is " << mat.type() << std::endl;
+        throw std::exception();
     }
 
     return cudaGetFeature(host_descriptors, rows, cols);

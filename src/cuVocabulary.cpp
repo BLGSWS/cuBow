@@ -22,5 +22,4 @@ void deleteData()
     NULL_CHECK( node_map )
     free(node_map);
     node_map = NULL;
-    
 }

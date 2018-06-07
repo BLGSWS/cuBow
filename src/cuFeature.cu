@@ -346,6 +346,7 @@ int initVocabulary()
 std::vector<cudaTuple> cudaFindWord(float* host_descriptor, size_t rows, size_t cols)
 {
     dim3 dimBlock(thread_rows, thread_cols);
+    dim3 dimGrid(rows > 256 ? 256 : rows);
     struct cudaTuple* feature;
     float* dev_descriptor;
     struct cudaTuple* dev_feature;
@@ -367,7 +368,7 @@ std::vector<cudaTuple> cudaFindWord(float* host_descriptor, size_t rows, size_t 
     ERROR_CHECK( cudaMalloc((void**)&dev_feature, sizeof(cudaTuple) * rows) )
 
     /// 运行kernel函数
-    findWordKernel<<<256, dimBlock>>>(dev_descriptor, rows, cols, cols_pitch, dev_feature);
+    findWordKernel<<<dimGrid, dimBlock>>>(dev_descriptor, rows, cols, cols_pitch, dev_feature);
 
     /// gpu上的O(n)还没有cpu上的O(nlogn)快 ヽ(o`皿o)ノ
     //featureMergeKernel<<<1, 256>>>(dev_feature, 255, dev_feature_len);

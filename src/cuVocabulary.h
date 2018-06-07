@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <vector>
+#include "Type.h"
 
 #define uint32 unsigned int
 #define uint16 unsigned long
@@ -39,6 +40,24 @@ struct cudaTuple
 }
 #endif
 
+struct QueryResult
+{
+    struct TuplePtr
+    {
+        const cudaTuple* pos;
+        uint32 offset;
+        TuplePtr(const cudaTuple* _pos, uint32 _offset):
+            pos(_pos), offset(_offset) {}
+        void copyData(cudaTuple* buffer) const
+        {
+            NULL_CHECK( buffer )
+            memcpy(buffer, pos, offset * sizeof(cudaTuple));
+        }
+    };
+    std::vector<TuplePtr> feature_ptrs;
+    uint32 nnz;
+};
+
 extern uint32 word_num;
 extern uint32 node_num;
 extern uint32 vector_row;
@@ -50,7 +69,8 @@ extern struct cudaNode* node_map;
 
 std::vector<cudaTuple> cudaFindWord(float* descriptors, size_t rows, size_t cols);
 std::vector<float> cudaFeatureScore(cudaTuple* feature_group, uint32 m, uint32 n, uint32 nnz, uint32* csrRow);
-
+std::vector<float> cudaFeatureScore_v2(cudaTuple* feature_group, uint32 m, uint32 n, uint32 nnz, uint32* csrRow);
+std::vector<float> cudaFeatureScore_stream_v2(const std::vector<QueryResult> &results, const Eigen::SparseVector<float> &feature);
 /// test
 void cudaFeatureScoreTest();
 void cuSparseTest();

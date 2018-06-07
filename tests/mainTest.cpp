@@ -46,10 +46,11 @@ int main()
     }
 
     Vocabulary vocabulary(5, 4);
-    //vocabulary.create(features);
-    vocabulary.read("tree");
+    vocabulary.create(features);
+    vocabulary.save("tree");
+    //vocabulary.read("tree");
 
-    clock_t stage1, stage2, stage3;
+    /*clock_t stage1, stage2, stage3;
 
     cv::Mat feature;
 
@@ -64,6 +65,7 @@ int main()
     detector->detect(image, key_points);
     descriptor->compute(image, key_points, feature);
 
+    cout << feature.type() << endl;
     //const vector<Vocabulary::Node*>& words = vocabulary.getWords();
     //VectorXf vec = words[5]->descriptor;
 
@@ -84,7 +86,7 @@ int main()
 
 
     cout << elapsed_time1 << ": " << elapsed_time2 << endl;
-
+*/
 
 #endif 
     return 0;
